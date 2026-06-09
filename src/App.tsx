@@ -15,6 +15,11 @@ import { DueManagement } from './pages/DueManagement'
 import { Returns } from './pages/Returns'
 import { Reports } from './pages/Reports'
 import { Settings } from './pages/Settings'
+import { Suppliers } from './pages/Suppliers'
+import { PurchaseEntry } from './pages/PurchaseEntry'
+import { StockTransfer } from './pages/StockTransfer'
+import { StockMovements } from './pages/StockMovements'
+import { Quotations } from './pages/Quotations'
 
 // Protected Route wrapper
 const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -74,6 +79,11 @@ export const App: React.FC = () => {
           <Route path="returns" element={<Returns />} />
           <Route path="reports" element={<Reports />} />
           <Route path="settings" element={<Settings />} />
+          <Route path="suppliers" element={<Suppliers />} />
+          <Route path="purchases" element={<PurchaseEntry />} />
+          <Route path="transfers" element={<StockTransfer />} />
+          <Route path="movements" element={<StockMovements />} />
+          <Route path="quotations" element={<Quotations />} />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

@@ -3,22 +3,54 @@ import { NavLink, useLocation } from 'react-router-dom'
 import { cn } from '../../lib/utils'
 import { useShopStore } from '../../store/shopStore'
 import {
-  LayoutDashboard, ShoppingCart, Package, Users, FileText,
+  LayoutDashboard, ShoppingCart, Package, Users, FileText, ClipboardList,
   AlertCircle, ArrowLeftRight, BarChart2, Settings, ChevronRight,
-  Store, Menu, X, Barcode
+  Store, Menu, X, Barcode, Truck, Building2, Repeat2, Activity
 } from 'lucide-react'
 
-const navItems = [
-  { path: '/', label: 'Dashboard', icon: LayoutDashboard },
-  { path: '/pos', label: 'POS Billing', icon: ShoppingCart, highlight: true },
-  { path: '/inventory', label: 'Inventory', icon: Package },
-  { path: '/products/add', label: 'Add Product', icon: Barcode },
-  { path: '/customers', label: 'Customers', icon: Users },
-  { path: '/bills', label: 'Bills', icon: FileText },
-  { path: '/due', label: 'Due Management', icon: AlertCircle },
-  { path: '/returns', label: 'Returns & Exchange', icon: ArrowLeftRight },
-  { path: '/reports', label: 'Reports', icon: BarChart2 },
-  { path: '/settings', label: 'Settings', icon: Settings },
+interface NavItem {
+  path: string
+  label: string
+  icon: React.ComponentType<{ className?: string }>
+  highlight?: boolean
+}
+
+interface NavSection {
+  title: string
+  items: NavItem[]
+}
+
+const navSections: NavSection[] = [
+  {
+    title: 'Main',
+    items: [
+      { path: '/',           label: 'Dashboard',         icon: LayoutDashboard },
+      { path: '/pos',        label: 'POS Billing',       icon: ShoppingCart, highlight: true },
+      { path: '/inventory',  label: 'Inventory',         icon: Package },
+      { path: '/products/add', label: 'Add Product',     icon: Barcode },
+      { path: '/customers',  label: 'Customers',         icon: Users },
+      { path: '/bills',      label: 'Bills',             icon: FileText },
+      { path: '/due',        label: 'Due Management',    icon: AlertCircle },
+      { path: '/returns',    label: 'Returns & Exchange', icon: ArrowLeftRight },
+    ],
+  },
+  {
+    title: 'Inventory Ops',
+    items: [
+      { path: '/suppliers',  label: 'Suppliers',         icon: Building2 },
+      { path: '/purchases',  label: 'Purchase Entry',    icon: Truck },
+      { path: '/transfers',  label: 'Stock Transfer',    icon: Repeat2 },
+      { path: '/movements',  label: 'Stock Movements',   icon: Activity },
+    ],
+  },
+  {
+    title: 'Analytics',
+    items: [
+      { path: '/quotations', label: 'Quotations',        icon: ClipboardList },
+      { path: '/reports',    label: 'Reports',           icon: BarChart2 },
+      { path: '/settings',   label: 'Settings',          icon: Settings },
+    ],
+  },
 ]
 
 interface SidebarProps {
@@ -82,29 +114,39 @@ export const Sidebar: React.FC<SidebarProps> = ({ mobile, onClose }) => {
         </div>
       </div>
 
-      {/* Nav Items */}
-      <nav className="flex-1 px-3 py-4 space-y-0.5 overflow-y-auto">
-        <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider px-2 mb-2">Navigation</p>
-        {navItems.map(({ path, label, icon: Icon, highlight }) => {
-          const isActive = path === '/' ? location.pathname === '/' : location.pathname.startsWith(path)
-          return (
-            <NavLink
-              key={path}
-              to={path}
-              onClick={onClose}
-              className={cn(
-                'flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all',
-                isActive
-                  ? 'bg-blue-600 text-white shadow-sm'
-                  : 'text-gray-400 hover:bg-gray-800 hover:text-white',
-                highlight && !isActive && 'border border-blue-500/30 text-blue-400 hover:bg-blue-600/10'
-              )}
-            >
-              <Icon className="w-4 h-4 flex-shrink-0" />
-              {label}
-            </NavLink>
-          )
-        })}
+      {/* Nav Sections */}
+      <nav className="flex-1 px-3 py-3 space-y-3 overflow-y-auto">
+        {navSections.map(section => (
+          <div key={section.title}>
+            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider px-2 mb-1">
+              {section.title}
+            </p>
+            <div className="space-y-0.5">
+              {section.items.map(({ path, label, icon: Icon, highlight }) => {
+                const isActive = path === '/'
+                  ? location.pathname === '/'
+                  : location.pathname.startsWith(path)
+                return (
+                  <NavLink
+                    key={path}
+                    to={path}
+                    onClick={onClose}
+                    className={cn(
+                      'flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all',
+                      isActive
+                        ? 'bg-blue-600 text-white shadow-sm'
+                        : 'text-gray-400 hover:bg-gray-800 hover:text-white',
+                      highlight && !isActive && 'border border-blue-500/30 text-blue-400 hover:bg-blue-600/10'
+                    )}
+                  >
+                    <Icon className="w-4 h-4 flex-shrink-0" />
+                    {label}
+                  </NavLink>
+                )
+              })}
+            </div>
+          </div>
+        ))}
       </nav>
 
       {/* Bottom Info */}

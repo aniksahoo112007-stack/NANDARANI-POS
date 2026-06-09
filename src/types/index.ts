@@ -7,8 +7,8 @@ export type Gender = 'Men' | 'Women' | 'Kids' | 'Unisex' | ''
 export type PaymentStatus = 'PAID' | 'PARTIAL' | 'DUE' | 'REFUNDED' | 'EXCHANGED' | 'CANCELLED'
 export type BillType = 'NORMAL' | 'GST'
 export type CheckoutType = 'OFFLINE' | 'ONLINE'
-export type MovementType = 'IN' | 'OUT' | 'ADJUSTMENT' | 'RETURN_IN' | 'EXCHANGE_IN' | 'EXCHANGE_OUT'
-export type ReferenceType = 'BILL' | 'RETURN' | 'EXCHANGE' | 'MANUAL' | 'PURCHASE'
+export type MovementType = 'IN' | 'OUT' | 'ADJUSTMENT' | 'RETURN_IN' | 'EXCHANGE_IN' | 'EXCHANGE_OUT' | 'TRANSFER_IN' | 'TRANSFER_OUT' | 'PURCHASE'
+export type ReferenceType = 'BILL' | 'RETURN' | 'EXCHANGE' | 'MANUAL' | 'PURCHASE' | 'TRANSFER'
 export type PaymentType = 'SALE' | 'DUE_COLLECTION' | 'REFUND'
 export type ExchangeItemType = 'RETURNED' | 'NEW'
 
@@ -437,4 +437,147 @@ export interface ReportFilter {
   from_date: string
   to_date: string
   shop_id: string
+}
+
+// ============================================================
+// Phase 1 — Purchase & Transfer Types
+// ============================================================
+
+export interface PurchaseInvoice {
+  id: string
+  shop_id: string
+  supplier_id: string | null
+  supplier_name: string
+  invoice_number: string | null
+  invoice_date: string
+  total_items: number
+  total_quantity: number
+  total_cost: number
+  notes: string | null
+  biller_name: string | null
+  created_at: string
+  purchase_items?: PurchaseItem[]
+}
+
+export interface PurchaseItem {
+  id: string
+  purchase_invoice_id: string
+  shop_id: string
+  product_id: string | null
+  barcode: string | null
+  product_name: string
+  quantity: number
+  unit_cost: number
+  selling_price: number
+  mrp: number
+  total_cost: number
+}
+
+export interface StockTransfer {
+  id: string
+  transfer_number: string
+  from_shop_id: string
+  to_shop_id: string
+  status: 'COMPLETED' | 'CANCELLED'
+  notes: string | null
+  biller_name: string | null
+  created_at: string
+  stock_transfer_items?: StockTransferItem[]
+}
+
+export interface StockTransferItem {
+  id: string
+  transfer_id: string
+  product_id: string | null
+  barcode: string | null
+  product_name: string
+  quantity: number
+  unit_cost: number
+}
+
+// ============================================================
+// Phase 2 — Hold Bill, Quotation Types
+// ============================================================
+
+export type QuotationStatus = 'DRAFT' | 'SENT' | 'CONVERTED' | 'CANCELLED'
+
+export interface HeldBill {
+  id: string
+  shop_id: string
+  label: string | null
+  cart: import('./index').CartItem[]
+  customer: Partial<import('./index').Customer> | null
+  customer_form: {
+    name: string
+    phone: string
+    whatsapp: string
+    address: string
+    gst_number: string
+  } | null
+  bill_type: import('./index').BillType
+  checkout_type: import('./index').CheckoutType
+  bill_discount_pct: number
+  bill_discount_amount: number
+  payment_method: string
+  payment_mode: string
+  paid_amount: number
+  biller_name: string | null
+  notes: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface Quotation {
+  id: string
+  shop_id: string
+  quotation_number: string
+  status: QuotationStatus
+  converted_bill_id: string | null
+  customer_id: string | null
+  customer_name: string | null
+  customer_phone: string | null
+  customer_whatsapp: string | null
+  customer_address: string | null
+  customer_gst: string | null
+  bill_type: import('./index').BillType
+  subtotal: number
+  item_discount: number
+  bill_discount: number
+  bill_discount_pct: number
+  gst_amount: number
+  grand_total: number
+  valid_days: number
+  notes: string | null
+  biller_name: string | null
+  created_at: string
+  updated_at: string
+  quotation_items?: QuotationItem[]
+}
+
+export interface QuotationItem {
+  id: string
+  quotation_id: string
+  shop_id: string
+  product_id: string | null
+  barcode: string | null
+  product_name: string
+  category: string | null
+  size: string | null
+  color: string | null
+  hsn_code: string | null
+  quantity: number
+  unit_price: number
+  mrp: number
+  discount_pct: number
+  discount_amount: number
+  gst_rate: number
+  gst_amount: number
+  total_amount: number
+  is_custom_item: boolean
+}
+
+// Split payment entry used in checkout
+export interface SplitPaymentEntry {
+  method: string
+  amount: number
 }

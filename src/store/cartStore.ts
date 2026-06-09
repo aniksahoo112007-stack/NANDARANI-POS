@@ -36,6 +36,21 @@ interface CartState {
   setPaidAmount: (amount: number) => void
   setBillerName: (name: string) => void
   setNotes: (notes: string) => void
+  setAdditionalPayments: (payments: { method: string; amount: number }[]) => void
+  restoreFromHeld: (held: {
+    cart: CartItem[]
+    customer: Partial<Customer> | null
+    customerForm: { name: string; phone: string; whatsapp: string; address: string; gst_number: string } | null
+    billType: BillType
+    checkoutType: CheckoutType
+    billDiscountPct: number
+    billDiscountAmount: number
+    paymentMethod: string
+    paymentMode: string
+    paidAmount: number
+    billerName: string
+    notes: string
+  }) => void
 
   // Computed
   getSubtotal: () => number
@@ -141,6 +156,25 @@ export const useCartStore = create<CartState>((set, get) => ({
   setPaidAmount: (paidAmount) => set({ paidAmount }),
   setBillerName: (billerName) => set({ billerName }),
   setNotes: (notes) => set({ notes }),
+
+  setAdditionalPayments: (payments) => set({ additionalPayments: payments }),
+
+  restoreFromHeld: (held) => {
+    set({
+      cart: held.cart.map(item => ({ ...item, id: generateId() })),
+      customer: held.customer,
+      billType: held.billType,
+      checkoutType: held.checkoutType,
+      billDiscountPct: held.billDiscountPct,
+      billDiscountAmount: held.billDiscountAmount,
+      paymentMethod: held.paymentMethod,
+      paymentMode: held.paymentMode as 'FULL' | 'PARTIAL' | 'DUE',
+      paidAmount: held.paidAmount,
+      billerName: held.billerName,
+      notes: held.notes,
+      additionalPayments: [],
+    })
+  },
 
   getSubtotal: () => get().cart.reduce((s, i) => s + i.unit_price * i.quantity, 0),
   getItemDiscount: () => get().cart.reduce((s, i) => s + i.discount_amount, 0),

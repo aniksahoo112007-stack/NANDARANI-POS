@@ -10,9 +10,10 @@ interface ThermalBillProps {
   settings: ShopSettings
   upiQR?: string        // data URL of QR image to print
   upiPayLink?: string   // upi:// payment link for display
+  splitPayments?: { method: string; amount: number }[]  // Phase 2 split payment
 }
 
-export const ThermalBill = forwardRef<HTMLDivElement, ThermalBillProps>(({ bill, items, shop, settings, upiQR, upiPayLink }, ref) => {
+export const ThermalBill = forwardRef<HTMLDivElement, ThermalBillProps>(({ bill, items, shop, settings, upiQR, upiPayLink, splitPayments }, ref) => {
   const isGST = bill.bill_type === 'GST'
 
   // Generate barcode SVG for bill number
@@ -180,10 +181,25 @@ export const ThermalBill = forwardRef<HTMLDivElement, ThermalBillProps>(({ bill,
       {/* Payment */}
       <table>
         <tbody>
-          <tr>
-            <td>Paid Amount</td>
-            <td style={{ textAlign: 'right' }}>₹{bill.paid_amount.toFixed(2)}</td>
-          </tr>
+          {splitPayments && splitPayments.length > 1 ? (
+            <>
+              {splitPayments.map((p, i) => (
+                <tr key={i}>
+                  <td>{p.method}</td>
+                  <td style={{ textAlign: 'right' }}>₹{p.amount.toFixed(2)}</td>
+                </tr>
+              ))}
+              <tr>
+                <td className="bold">Total Paid</td>
+                <td className="bold" style={{ textAlign: 'right' }}>₹{bill.paid_amount.toFixed(2)}</td>
+              </tr>
+            </>
+          ) : (
+            <tr>
+              <td>Paid Amount</td>
+              <td style={{ textAlign: 'right' }}>₹{bill.paid_amount.toFixed(2)}</td>
+            </tr>
+          )}
           {bill.due_amount > 0 && (
             <tr>
               <td className="bold">Due Amount</td>

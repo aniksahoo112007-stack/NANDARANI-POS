@@ -90,6 +90,7 @@ export interface Product {
   image_url: string | null
   notes: string | null
   is_active: boolean
+  parent_product_id: string | null
   created_at: string
   updated_at: string
 }
@@ -305,6 +306,7 @@ export interface CartItem {
   total_amount: number
   stock_quantity: number // available stock
   is_custom_item: boolean
+  purchase_price?: number // for profit tracking
   image_url?: string
 }
 
@@ -478,9 +480,13 @@ export interface StockTransfer {
   transfer_number: string
   from_shop_id: string
   to_shop_id: string
-  status: 'COMPLETED' | 'CANCELLED'
+  status: 'PENDING' | 'APPROVED' | 'REJECTED' | 'COMPLETED' | 'CANCELLED'
   notes: string | null
   biller_name: string | null
+  requested_by: string | null
+  approved_by: string | null
+  approved_at: string | null
+  rejection_reason: string | null
   created_at: string
   stock_transfer_items?: StockTransferItem[]
 }
@@ -580,4 +586,166 @@ export interface QuotationItem {
 export interface SplitPaymentEntry {
   method: string
   amount: number
+}
+
+// ============================================================
+// Phase 3 — Advanced Inventory & Profit System Types
+// ============================================================
+
+// Feature 1: parent_product_id added to Product (above) via DB column
+// Products with same parent_product_id are variants of each other
+
+// Feature 2: Stock Audit
+export type AuditStatus = 'DRAFT' | 'CONFIRMED'
+
+export interface StockAudit {
+  id: string
+  shop_id: string
+  audit_date: string
+  status: AuditStatus
+  total_items: number
+  total_variance: number
+  notes: string | null
+  biller_name: string | null
+  created_at: string
+  updated_at: string
+  stock_audit_items?: StockAuditItem[]
+}
+
+export interface StockAuditItem {
+  id: string
+  audit_id: string
+  shop_id: string
+  product_id: string | null
+  barcode: string | null
+  product_name: string
+  category: string | null
+  system_quantity: number
+  physical_quantity: number
+  variance: number
+  adjustment_reason: string | null
+  is_adjusted: boolean
+  created_at: string
+}
+
+// Feature 8: Profit tracking
+export interface ProfitSummary {
+  revenue: number
+  cost: number
+  gross_profit: number
+  margin_pct: number
+  total_bills: number
+  avg_order_value: number
+}
+
+export interface BillProfit {
+  bill_id: string
+  bill_number: string
+  grand_total: number
+  total_cost: number
+  gross_profit: number
+  margin_pct: number
+  created_at: string
+}
+
+// Feature 10: Daily Closing
+export interface DailyClosing {
+  id: string
+  shop_id: string
+  closing_date: string
+  total_bills: number
+  cash_total: number
+  upi_total: number
+  card_total: number
+  other_total: number
+  due_created: number
+  due_collected: number
+  returns_total: number
+  exchanges_total: number
+  gross_revenue: number
+  total_cost: number
+  gross_profit: number
+  net_revenue: number
+  closed_by: string | null
+  notes: string | null
+  created_at: string
+}
+
+// Feature 13: Transfer Request (extends StockTransfer with new fields)
+export type TransferStatus = 'PENDING' | 'APPROVED' | 'REJECTED' | 'COMPLETED' | 'CANCELLED'
+
+// StockTransfer status is now TransferStatus (extends Phase 1 definition)
+// Phase 1 StockTransfer.status is 'COMPLETED' | 'CANCELLED' — we widen it:
+export interface StockTransferV2 {
+  id: string
+  transfer_number: string
+  from_shop_id: string
+  to_shop_id: string
+  status: TransferStatus
+  notes: string | null
+  biller_name: string | null
+  requested_by: string | null
+  approved_by: string | null
+  approved_at: string | null
+  rejection_reason: string | null
+  created_at: string
+  stock_transfer_items?: StockTransferItem[]
+}
+
+// Feature 5/6: Stock Age & Dead Stock
+export interface StockAgeItem {
+  product_id: string
+  barcode: string
+  product_name: string
+  category: string | null
+  size: string | null
+  color: string | null
+  current_stock: number
+  last_sold_date: string | null
+  days_since_sold: number
+  purchase_price: number
+  selling_price: number
+  inventory_value: number
+}
+
+// Feature 7: Fast Moving
+export interface FastMovingProduct {
+  product_id: string
+  product_name: string
+  barcode: string
+  category: string | null
+  size: string | null
+  color: string | null
+  total_qty: number
+  total_revenue: number
+  total_profit: number
+  bill_count: number
+}
+
+export interface FastMovingCategory {
+  category: string
+  total_qty: number
+  total_revenue: number
+  bill_count: number
+}
+
+// Feature 14: Product Performance
+export interface ProductPerformance {
+  product_id: string
+  barcode: string
+  product_name: string
+  category: string | null
+  size: string | null
+  color: string | null
+  current_stock: number
+  purchase_price: number
+  selling_price: number
+  stock_added: number
+  stock_sold: number
+  revenue: number
+  cost: number
+  profit: number
+  returns_qty: number
+  exchanges_qty: number
+  last_sale_date: string | null
 }

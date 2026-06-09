@@ -20,6 +20,12 @@ import { PurchaseEntry } from './pages/PurchaseEntry'
 import { StockTransfer } from './pages/StockTransfer'
 import { StockMovements } from './pages/StockMovements'
 import { Quotations } from './pages/Quotations'
+import { StockAudit } from './pages/StockAudit'
+import { StockReports } from './pages/StockReports'
+import { ShopComparison } from './pages/ShopComparison'
+import { DailyClosing } from './pages/DailyClosing'
+import { ProductPerformance } from './pages/ProductPerformance'
+import { BarcodeDesigner } from './pages/BarcodeDesigner'
 
 // Protected Route wrapper
 const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -84,6 +90,12 @@ export const App: React.FC = () => {
           <Route path="transfers" element={<StockTransfer />} />
           <Route path="movements" element={<StockMovements />} />
           <Route path="quotations" element={<Quotations />} />
+          <Route path="stock-audit" element={<StockAudit />} />
+          <Route path="stock-reports" element={<StockReports />} />
+          <Route path="shop-comparison" element={<ShopComparison />} />
+          <Route path="daily-closing" element={<DailyClosing />} />
+          <Route path="product-performance" element={<ProductPerformance />} />
+          <Route path="barcode-designer" element={<BarcodeDesigner />} />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

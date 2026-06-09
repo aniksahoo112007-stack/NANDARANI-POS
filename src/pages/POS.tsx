@@ -2,6 +2,7 @@ import React, { useState, useRef, useCallback, useEffect } from 'react'
 import { useReactToPrint } from 'react-to-print'
 import { useCartStore } from '../store/cartStore'
 import { useShopStore } from '../store/shopStore'
+import { supabase } from '../lib/supabase'
 import { products as productsDb, customers as customersDb, bills as billsDb, heldBillsDb, getErrorMessage } from '../lib/database'
 import { Button, Input, Modal, Badge } from '../components/ui'
 import { ThermalBill } from '../components/pos/ThermalBill'
@@ -10,7 +11,7 @@ import {
   CreditCard, Printer, Download, Share2, CheckCircle,
   Camera, AlertTriangle, X, Package, Grid, ChevronDown,
   ChevronUp, Tag, QrCode, PauseCircle, PlayCircle, Clock,
-  SplitSquareHorizontal
+  SplitSquareHorizontal, Zap, Users, History
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import {
@@ -75,6 +76,11 @@ export const POS: React.FC = () => {
     { method: 'UPI', amount: '' },
   ])
 
+  // ─── Quick Billing Mode ──────────────────────────────────────────────────
+  const [quickMode, setQuickMode] = useState(false)
+  const [recentCustomers, setRecentCustomers] = useState<Customer[]>([])
+  const [showRecentPanel, setShowRecentPanel] = useState(false)
+
   // ─── Initialise cart shop ──────────────────────────────────────────────────
   useEffect(() => {
     if (activeShop) cart.setShop(activeShop.id)
@@ -134,9 +140,14 @@ export const POS: React.FC = () => {
     if (!product) { toast.error(`Product not found: ${barcode}`); return }
     if (product.stock_quantity <= 0) { toast.error(`${product.name} is out of stock!`); return }
     addProductToCart(product)
-    toast.success(`${product.name} added`)
+    if (quickMode) {
+      toast.success(`${product.name} added`, { duration: 1200 })
+      setTimeout(() => barcodeInputRef.current?.focus(), 60)
+    } else {
+      toast.success(`${product.name} added`)
+    }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeShop?.id])
+  }, [activeShop?.id, quickMode])
 
   const stopCamera = useCallback(() => {
     controlsRef.current?.stop()
@@ -231,6 +242,7 @@ export const POS: React.FC = () => {
       total_amount: parseFloat((afterDisc + gstAmt).toFixed(2)),
       stock_quantity: product.stock_quantity,
       is_custom_item: false,
+      purchase_price: product.purchase_price || 0,
       image_url: product.image_url || undefined,
     })
     setProductSearch('')
@@ -311,6 +323,44 @@ export const POS: React.FC = () => {
   useEffect(() => {
     if (showHeldPanel) loadHeldBills()
   }, [showHeldPanel, loadHeldBills])
+
+  const loadRecentCustomers = useCallback(async () => {
+    if (!activeShop) return
+    try {
+      const { data } = await supabase
+        .from('customers')
+        .select('*')
+        .eq('shop_id', activeShop.id)
+        .not('last_purchase_date', 'is', null)
+        .order('last_purchase_date', { ascending: false })
+        .limit(10)
+      setRecentCustomers((data || []) as Customer[])
+    } catch { /* silent */ }
+  }, [activeShop?.id])
+
+  useEffect(() => {
+    if (showRecentPanel) loadRecentCustomers()
+  }, [showRecentPanel, loadRecentCustomers])
+
+  // ─── Keyboard shortcuts ───────────────────────────────────────────────────
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement).tagName
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') {
+        if (e.key === 'Escape') { setProductSearch(''); setCustomerSearch(''); setSearchResults([]); setCustomerResults([]); (e.target as HTMLInputElement).blur() }
+        return
+      }
+      if (e.key === 'F2') { e.preventDefault(); setShowRecentPanel(p => !p) }
+      if (e.key === 'F3') { e.preventDefault(); setTimeout(() => document.getElementById('pos-product-search')?.focus(), 50) }
+      if (e.key === 'F4') { e.preventDefault(); if (cart.cart.length > 0) handleHoldBill() }
+      if (e.key === 'F5') { e.preventDefault(); setShowHeldPanel(p => !p) }
+      if (e.key === 'F6') { e.preventDefault(); setSplitMode(p => !p) }
+      if (e.key === 'F7') { e.preventDefault(); if (cart.cart.length > 0) setCheckoutModal(true) }
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cart.cart.length])
 
   const handleResumeBill = (held: HeldBill) => {
     if (cart.cart.length > 0) {
@@ -593,6 +643,24 @@ export const POS: React.FC = () => {
             )}
 
             <div className="ml-auto flex items-center gap-2">
+              {/* Quick Mode */}
+              <button
+                onClick={() => { setQuickMode(p => !p); if (!quickMode) setTimeout(() => barcodeInputRef.current?.focus(), 50) }}
+                title="Quick Billing Mode — barcode field always focused (F2)"
+                className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border transition-colors ${quickMode ? 'bg-green-600 border-green-600 text-white' : 'border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700'}`}
+              >
+                <Zap className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">{quickMode ? 'Quick ON' : 'Quick'}</span>
+              </button>
+              {/* Recent Customers */}
+              <button
+                onClick={() => setShowRecentPanel(p => !p)}
+                title="Recent Customers (F2)"
+                className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border transition-colors ${showRecentPanel ? 'bg-blue-50 border-blue-400 text-blue-700 dark:bg-blue-900/20 dark:text-blue-300' : 'border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700'}`}
+              >
+                <Users className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">Recent</span>
+              </button>
               {/* Hold Bill */}
               <button
                 onClick={handleHoldBill}
@@ -635,11 +703,11 @@ export const POS: React.FC = () => {
               <input
                 ref={barcodeInputRef}
                 type="text" value={barcodeInput}
+                autoFocus={quickMode}
                 onChange={e => setBarcodeInput(e.target.value)}
                 onKeyDown={e => { if (e.key === 'Enter') { handleBarcodeScan(barcodeInput); setTimeout(() => barcodeInputRef.current?.focus(), 80) } }}
                 placeholder="Scan barcode or press Enter..."
                 className="w-full pl-9 pr-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                autoFocus
               />
             </div>
             <button onClick={() => { setCameraError(null); setCameraModal(true) }}

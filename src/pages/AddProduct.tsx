@@ -1,8 +1,8 @@
-import React, { useState, useRef, useEffect } from 'react'
+import React, { useState, useRef, useEffect, useCallback } from 'react'
 import { useShopStore } from '../store/shopStore'
 import { products as productsDb, shops as shopsDb } from '../lib/database'
 import { Button, Input, Select, Textarea, Card, Modal } from '../components/ui'
-import { Save, Barcode, Download, Printer, RefreshCw, Package } from 'lucide-react'
+import { Save, Barcode, Download, Printer, RefreshCw, Package, Layers, Search, X, Plus } from 'lucide-react'
 import toast from 'react-hot-toast'
 import JsBarcode from 'jsbarcode'
 import jsPDF from 'jspdf'
@@ -35,6 +35,63 @@ export const AddProduct: React.FC = () => {
   const [barcodeCount, setBarcodeCount] = useState(1)
   const barcodeRef = useRef<SVGSVGElement>(null)
   const labelRef = useRef<HTMLDivElement>(null)
+
+  // ─── Variant Matrix ──────────────────────────────────────────
+  const [parentProductId, setParentProductId] = useState<string | null>(null)
+  const [parentProduct, setParentProduct] = useState<Product | null>(null)
+  const [variantGroup, setVariantGroup] = useState<Product[]>([])
+  const [variantSearch, setVariantSearch] = useState('')
+  const [variantSearchResults, setVariantSearchResults] = useState<Product[]>([])
+  const [variantSearching, setVariantSearching] = useState(false)
+
+  const searchVariantParent = useCallback(async (q: string) => {
+    if (!activeShop || q.length < 2) { setVariantSearchResults([]); return }
+    setVariantSearching(true)
+    try {
+      const { data } = await productsDb.list(activeShop.id, { search: q, limit: 8 })
+      // Only show products that could be parents (no parent themselves, or are a parent)
+      setVariantSearchResults(data)
+    } finally {
+      setVariantSearching(false)
+    }
+  }, [activeShop?.id])
+
+  useEffect(() => {
+    const timer = setTimeout(() => searchVariantParent(variantSearch), 300)
+    return () => clearTimeout(timer)
+  }, [variantSearch, searchVariantParent])
+
+  const loadVariantGroup = useCallback(async (pid: string) => {
+    if (!activeShop) return
+    const { data } = await productsDb.list(activeShop.id, { limit: 50 })
+    setVariantGroup(data.filter(p => p.id === pid || p.parent_product_id === pid))
+  }, [activeShop?.id])
+
+  const selectParent = (p: Product) => {
+    setParentProductId(p.id)
+    setParentProduct(p)
+    setVariantSearch('')
+    setVariantSearchResults([])
+    loadVariantGroup(p.id)
+    // Pre-fill name/category/brand/price from parent
+    setForm(s => ({
+      ...s,
+      name: p.name,
+      category: p.category || s.category,
+      brand: p.brand || s.brand,
+      purchase_price: String(p.purchase_price || s.purchase_price),
+      selling_price: String(p.selling_price || s.selling_price),
+      mrp: String(p.mrp || s.mrp),
+      gst_rate: String(p.gst_rate ?? s.gst_rate),
+      supplier_name: p.supplier_name || s.supplier_name,
+    }))
+  }
+
+  const clearParent = () => {
+    setParentProductId(null)
+    setParentProduct(null)
+    setVariantGroup([])
+  }
 
   // Generate barcode on mount (fetch next)
   useEffect(() => {
@@ -101,6 +158,7 @@ export const AddProduct: React.FC = () => {
         image_url: form.image_url || null,
         notes: form.notes || null,
         is_active: true,
+        parent_product_id: parentProductId || null,
       })
 
       setSavedProduct(product)
@@ -108,6 +166,13 @@ export const AddProduct: React.FC = () => {
       setShowBarcodeModal(true)
       setForm(defaultForm)
       await generateNewBarcode()
+      // Refresh variant group after save
+      if (parentProductId) {
+        loadVariantGroup(parentProductId)
+      } else if (product.id) {
+        // This new product becomes a potential parent — keep it selected
+        setVariantGroup([product])
+      }
     } catch (e: unknown) {
       toast.error(e instanceof Error ? e.message : 'Failed to save product')
     } finally {
@@ -282,14 +347,81 @@ export const AddProduct: React.FC = () => {
             </div>
           </Card>
 
+          {/* Variant Matrix */}
+          <Card>
+            <h3 className="font-semibold text-gray-900 dark:text-gray-100 mb-3 flex items-center gap-2">
+              <Layers className="w-4 h-4 text-purple-600" /> Variant Group
+            </h3>
+
+            {parentProduct ? (
+              <div className="space-y-3">
+                <div className="flex items-center justify-between bg-purple-50 dark:bg-purple-900/20 rounded-lg px-3 py-2">
+                  <div>
+                    <p className="text-sm font-medium text-purple-800 dark:text-purple-200">{parentProduct.name}</p>
+                    <p className="text-xs text-purple-600 dark:text-purple-400">Parent product</p>
+                  </div>
+                  <button onClick={clearParent} className="text-purple-400 hover:text-purple-600">
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+
+                {variantGroup.length > 0 && (
+                  <div className="space-y-1 max-h-48 overflow-y-auto">
+                    <p className="text-xs text-gray-500 font-medium">Existing variants ({variantGroup.length})</p>
+                    {variantGroup.map(v => (
+                      <div key={v.id} className="flex items-center justify-between text-xs py-1.5 px-2 rounded bg-gray-50 dark:bg-gray-800">
+                        <div>
+                          <span className="font-medium text-gray-700 dark:text-gray-300">{v.size || '\u2014'} / {v.color || '\u2014'}</span>
+                          <span className="ml-2 text-gray-400">\u20b9{v.selling_price}</span>
+                        </div>
+                        <span className={`font-mono ${v.stock_quantity <= 0 ? 'text-red-500' : 'text-gray-500'}`}>
+                          {v.stock_quantity} pcs
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <p className="text-xs text-gray-400">Fill in size/color for this new variant, then save.</p>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                <p className="text-xs text-gray-500 mb-2">Link this product as a variant of an existing product (e.g. same shirt in different sizes).</p>
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" />
+                  <input
+                    value={variantSearch}
+                    onChange={e => setVariantSearch(e.target.value)}
+                    placeholder="Search parent product\u2026"
+                    className="w-full pl-9 pr-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-purple-500"
+                  />
+                </div>
+                {variantSearching && <p className="text-xs text-gray-400 text-center py-1">Searching\u2026</p>}
+                {variantSearchResults.length > 0 && (
+                  <div className="border border-gray-200 dark:border-gray-700 rounded-lg divide-y divide-gray-100 dark:divide-gray-700 max-h-40 overflow-y-auto">
+                    {variantSearchResults.map(p => (
+                      <button key={p.id} onClick={() => selectParent(p)}
+                        className="w-full flex items-center justify-between px-3 py-2 text-left hover:bg-purple-50 dark:hover:bg-purple-900/20 transition-colors">
+                        <div>
+                          <p className="text-sm font-medium text-gray-800 dark:text-gray-200">{p.name}</p>
+                          <p className="text-xs text-gray-400">{p.category} \u00b7 {p.barcode}</p>
+                        </div>
+                        <Plus className="w-3.5 h-3.5 text-purple-500 shrink-0" />
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </Card>
+
           {/* Tips */}
           <div className="bg-blue-50 dark:bg-blue-900/20 rounded-xl p-4">
-            <h4 className="text-xs font-semibold text-blue-700 dark:text-blue-300 mb-2">💡 Tips</h4>
+            <h4 className="text-xs font-semibold text-blue-700 dark:text-blue-300 mb-2">\ud83d\udca1 Tips</h4>
             <ul className="text-xs text-blue-600 dark:text-blue-400 space-y-1">
-              <li>• Barcode prefix: <strong>{activeShop?.barcode_prefix}</strong></li>
-              <li>• Format: CODE128 (universal)</li>
-              <li>• Scan directly in POS</li>
-              <li>• Print on thermal or A4 labels</li>
+              <li>\u2022 Barcode prefix: <strong>{activeShop?.barcode_prefix}</strong></li>
+              <li>\u2022 Format: CODE128 (universal)</li>
+              <li>\u2022 Scan directly in POS</li>
+              <li>\u2022 Print on thermal or A4 labels</li>
             </ul>
           </div>
         </div>
@@ -304,16 +436,26 @@ export const AddProduct: React.FC = () => {
           <div>
             <p className="font-semibold text-gray-900 dark:text-gray-100">{savedProduct?.name}</p>
             <p className="text-sm text-gray-500 font-mono mt-1">{savedProduct?.barcode}</p>
-            <p className="text-sm text-gray-500 mt-1">₹{savedProduct?.selling_price} • Stock: {savedProduct?.stock_quantity}</p>
+            <p className="text-sm text-gray-500 mt-1">\u20b9{savedProduct?.selling_price} \u2022 Stock: {savedProduct?.stock_quantity}</p>
           </div>
-          
-          <div className="flex gap-3">
-            <Button icon={<Download className="w-4 h-4" />} variant="secondary" fullWidth onClick={() => { downloadBarcodeImage(); setShowBarcodeModal(false) }}>
-              Download
-            </Button>
-            <Button fullWidth onClick={() => setShowBarcodeModal(false)}>
-              Add Another
-            </Button>
+          <div className="flex flex-col gap-2">
+            <div className="flex gap-2">
+              <Button icon={<Download className="w-4 h-4" />} variant="secondary" fullWidth size="sm" onClick={() => { downloadBarcodeImage(); setShowBarcodeModal(false) }}>
+                Download
+              </Button>
+              <Button fullWidth size="sm" onClick={() => setShowBarcodeModal(false)}>
+                Add Another
+              </Button>
+            </div>
+            {parentProduct && (
+              <Button variant="outline" fullWidth size="sm" icon={<Layers className="w-3.5 h-3.5" />}
+                onClick={() => {
+                  setShowBarcodeModal(false)
+                  setForm(s => ({ ...s, size: '', color: '', stock_quantity: '1' }))
+                }}>
+                Add Another Variant ({parentProduct.name})
+              </Button>
+            )}
           </div>
         </div>
       </Modal>

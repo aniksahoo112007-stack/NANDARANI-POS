@@ -9,7 +9,8 @@ import {
 } from '../components/ui'
 import {
   Plus, Edit, Trash2, Package, TrendingDown, Eye,
-  BarChart2, Filter, ChevronDown, RefreshCw, Download, Printer
+  BarChart2, Filter, ChevronDown, RefreshCw, Download, Printer,
+  CheckSquare, Square, Layers, Tag, Percent, Users, AlertTriangle
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { formatCurrency, formatDate, exportToCSV } from '../lib/utils'
@@ -47,6 +48,15 @@ export const Inventory: React.FC = () => {
   const [labelFormat, setLabelFormat] = useState<LabelFormat>('A4')
   const [labelQty, setLabelQty] = useState(1)
   const labelSheetRef = useRef<HTMLDivElement>(null)
+
+  // ─── Bulk management ──────────────────────────────────────────
+  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [bulkModal, setBulkModal] = useState<'price' | 'category' | 'gst' | 'supplier' | 'lowstock' | null>(null)
+  const [bulkPriceMode, setBulkPriceMode] = useState<'increase_pct' | 'decrease_pct' | 'set'>('increase_pct')
+  const [bulkPriceValue, setBulkPriceValue] = useState(0)
+  const [bulkTextValue, setBulkTextValue] = useState('')
+  const [bulkNumValue, setBulkNumValue] = useState(0)
+  const [bulkApplying, setBulkApplying] = useState(false)
 
   const handlePrintLabels = useReactToPrint({
     content: () => labelSheetRef.current,
@@ -137,6 +147,62 @@ export const Inventory: React.FC = () => {
     setViewProduct(product)
   }
 
+  const toggleSelect = (id: string) => {
+    setSelected(prev => {
+      const next = new Set(prev)
+      next.has(id) ? next.delete(id) : next.add(id)
+      return next
+    })
+  }
+
+  const toggleSelectAll = () => {
+    if (selected.size === productList.length) {
+      setSelected(new Set())
+    } else {
+      setSelected(new Set(productList.map(p => p.id)))
+    }
+  }
+
+  const handleBulkApply = async () => {
+    if (!activeShop || selected.size === 0) return
+    setBulkApplying(true)
+    try {
+      const ids = Array.from(selected)
+      for (const id of ids) {
+        const product = productList.find(p => p.id === id)
+        if (!product) continue
+        let updates: Partial<Product> = {}
+
+        if (bulkModal === 'price') {
+          let newPrice = product.selling_price
+          if (bulkPriceMode === 'increase_pct') newPrice = parseFloat((product.selling_price * (1 + bulkPriceValue / 100)).toFixed(2))
+          else if (bulkPriceMode === 'decrease_pct') newPrice = parseFloat((product.selling_price * (1 - bulkPriceValue / 100)).toFixed(2))
+          else newPrice = bulkPriceValue
+          updates = { selling_price: Math.max(0, newPrice) }
+        } else if (bulkModal === 'category') {
+          updates = { category: bulkTextValue }
+        } else if (bulkModal === 'gst') {
+          updates = { gst_rate: bulkNumValue }
+        } else if (bulkModal === 'supplier') {
+          updates = { supplier_name: bulkTextValue }
+        } else if (bulkModal === 'lowstock') {
+          updates = { low_stock_limit: bulkNumValue }
+        }
+
+        await productsDb.update(id, updates)
+      }
+
+      toast.success(`Updated ${ids.length} products`)
+      setBulkModal(null)
+      setSelected(new Set())
+      load()
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : 'Bulk update failed')
+    } finally {
+      setBulkApplying(false)
+    }
+  }
+
   const handleExport = () => {
     if (!productList.length) return
     exportToCSV(productList.map(p => ({
@@ -172,6 +238,21 @@ export const Inventory: React.FC = () => {
         </div>
       </div>
 
+      {/* Bulk action bar */}
+      {selected.size > 0 && (
+        <div className="flex flex-wrap items-center gap-2 p-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-xl">
+          <span className="text-sm font-semibold text-blue-700 dark:text-blue-300">{selected.size} selected</span>
+          <div className="flex flex-wrap gap-2 ml-2">
+            <Button variant="outline" size="sm" onClick={() => { setBulkModal('price'); setBulkPriceValue(0); setBulkPriceMode('increase_pct') }} icon={<Tag className="w-3.5 h-3.5" />}>Bulk Price</Button>
+            <Button variant="outline" size="sm" onClick={() => { setBulkModal('category'); setBulkTextValue('') }} icon={<Layers className="w-3.5 h-3.5" />}>Category</Button>
+            <Button variant="outline" size="sm" onClick={() => { setBulkModal('gst'); setBulkNumValue(0) }} icon={<Percent className="w-3.5 h-3.5" />}>GST %</Button>
+            <Button variant="outline" size="sm" onClick={() => { setBulkModal('supplier'); setBulkTextValue('') }} icon={<Users className="w-3.5 h-3.5" />}>Supplier</Button>
+            <Button variant="outline" size="sm" onClick={() => { setBulkModal('lowstock'); setBulkNumValue(5) }} icon={<AlertTriangle className="w-3.5 h-3.5" />}>Low Stock Limit</Button>
+          </div>
+          <button onClick={() => setSelected(new Set())} className="ml-auto text-xs text-gray-500 hover:text-gray-700 dark:hover:text-gray-300">Clear selection</button>
+        </div>
+      )}
+
       {/* Filters */}
       <div className="flex flex-wrap gap-3">
         <SearchInput value={search} onChange={v => { setSearch(v); setPage(0) }} placeholder="Search by name or barcode..." className="flex-1 min-w-48" />
@@ -198,6 +279,13 @@ export const Inventory: React.FC = () => {
           <table className="w-full text-sm">
             <thead>
               <tr className="bg-gray-50 dark:bg-gray-900/50">
+                <th className="px-3 py-3 w-10">
+                  <button onClick={toggleSelectAll} className="text-gray-400 hover:text-blue-600">
+                    {selected.size === productList.length && productList.length > 0
+                      ? <CheckSquare className="w-4 h-4 text-blue-600" />
+                      : <Square className="w-4 h-4" />}
+                  </button>
+                </th>
                 <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Product</th>
                 <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Barcode</th>
                 <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Category</th>
@@ -214,7 +302,12 @@ export const Inventory: React.FC = () => {
                   <EmptyState icon={<Package className="w-8 h-8" />} title="No products found" action={<Button size="sm" onClick={() => navigate('/products/add')}>Add First Product</Button>} />
                 </td></tr>
               ) : productList.map(product => (
-                <tr key={product.id} className="hover:bg-gray-50 dark:hover:bg-gray-700/30 transition-colors">
+                <tr key={product.id} className={`hover:bg-gray-50 dark:hover:bg-gray-700/30 transition-colors ${selected.has(product.id) ? 'bg-blue-50 dark:bg-blue-900/10' : ''}`}>
+                  <td className="px-3 py-3">
+                    <button onClick={() => toggleSelect(product.id)} className="text-gray-400 hover:text-blue-600">
+                      {selected.has(product.id) ? <CheckSquare className="w-4 h-4 text-blue-600" /> : <Square className="w-4 h-4" />}
+                    </button>
+                  </td>
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-3">
                       <div className="w-9 h-9 bg-gray-100 dark:bg-gray-700 rounded-lg flex items-center justify-center flex-shrink-0">
@@ -367,10 +460,7 @@ export const Inventory: React.FC = () => {
                     <span className="text-gray-500 ml-2">{m.quantity} units</span>
                     {m.notes && <span className="text-gray-400 ml-2">• {m.notes}</span>}
                   </div>
-                  <div className="text-right">
-                    <p className="text-xs text-gray-500">{m.quantity_before} → {m.quantity_after}</p>
-                    <p className="text-xs text-gray-400">{new Date(m.created_at).toLocaleDateString('en-IN')}</p>
-                  </div>
+                  <span className="text-xs text-gray-400">{m.created_at ? new Date(m.created_at).toLocaleDateString() : ''}</span>
                 </div>
               ))}
             </div>
@@ -378,97 +468,128 @@ export const Inventory: React.FC = () => {
         )}
       </Modal>
 
-      {/* Delete Confirm */}
+      {/* Bulk Modals */}
+      <Modal isOpen={bulkModal === 'price'} onClose={() => setBulkModal(null)} title={`Bulk Price Update (${selected.size} products)`} size="sm">
+        <div className="p-5 space-y-4">
+          <div className="flex gap-2">
+            {(['increase_pct', 'decrease_pct', 'set'] as const).map(m => (
+              <button key={m} onClick={() => setBulkPriceMode(m)}
+                className={`flex-1 py-2 text-xs font-medium rounded-lg capitalize ${bulkPriceMode === m ? 'bg-blue-600 text-white' : 'bg-gray-100 dark:bg-gray-700 text-gray-600'}`}>
+                {m === 'increase_pct' ? 'Increase %' : m === 'decrease_pct' ? 'Decrease %' : 'Set Price'}
+              </button>
+            ))}
+          </div>
+          <Input
+            label={bulkPriceMode === 'set' ? 'New Selling Price' : 'Percentage (%)'}
+            type="number" min="0"
+            value={bulkPriceValue || ''}
+            onChange={e => setBulkPriceValue(parseFloat(e.target.value) || 0)}
+          />
+          <div className="flex gap-3">
+            <Button variant="outline" fullWidth onClick={() => setBulkModal(null)}>Cancel</Button>
+            <Button fullWidth onClick={handleBulkApply} loading={bulkApplying}>Apply to {selected.size} Products</Button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal isOpen={bulkModal === 'category'} onClose={() => setBulkModal(null)} title={`Bulk Category (${selected.size} products)`} size="sm">
+        <div className="p-5 space-y-4">
+          <Input label="New Category" value={bulkTextValue} onChange={e => setBulkTextValue(e.target.value)} placeholder="e.g. Shirts, Sarees" list="cat-list" />
+          <datalist id="cat-list">{categories.map(c => <option key={c} value={c} />)}</datalist>
+          <div className="flex gap-3">
+            <Button variant="outline" fullWidth onClick={() => setBulkModal(null)}>Cancel</Button>
+            <Button fullWidth onClick={handleBulkApply} loading={bulkApplying}>Apply to {selected.size} Products</Button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal isOpen={bulkModal === 'gst'} onClose={() => setBulkModal(null)} title={`Bulk GST Rate (${selected.size} products)`} size="sm">
+        <div className="p-5 space-y-4">
+          <Input label="New GST Rate (%)" type="number" min="0" max="28" value={bulkNumValue || ''} onChange={e => setBulkNumValue(parseFloat(e.target.value) || 0)} />
+          <div className="flex gap-3">
+            <Button variant="outline" fullWidth onClick={() => setBulkModal(null)}>Cancel</Button>
+            <Button fullWidth onClick={handleBulkApply} loading={bulkApplying}>Apply to {selected.size} Products</Button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal isOpen={bulkModal === 'supplier'} onClose={() => setBulkModal(null)} title={`Bulk Supplier (${selected.size} products)`} size="sm">
+        <div className="p-5 space-y-4">
+          <Input label="Supplier Name" value={bulkTextValue} onChange={e => setBulkTextValue(e.target.value)} placeholder="Supplier name" />
+          <div className="flex gap-3">
+            <Button variant="outline" fullWidth onClick={() => setBulkModal(null)}>Cancel</Button>
+            <Button fullWidth onClick={handleBulkApply} loading={bulkApplying}>Apply to {selected.size} Products</Button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal isOpen={bulkModal === 'lowstock'} onClose={() => setBulkModal(null)} title={`Bulk Low Stock Limit (${selected.size} products)`} size="sm">
+        <div className="p-5 space-y-4">
+          <Input label="Low Stock Limit" type="number" min="0" value={bulkNumValue || ''} onChange={e => setBulkNumValue(parseInt(e.target.value) || 0)} />
+          <div className="flex gap-3">
+            <Button variant="outline" fullWidth onClick={() => setBulkModal(null)}>Cancel</Button>
+            <Button fullWidth onClick={handleBulkApply} loading={bulkApplying}>Apply to {selected.size} Products</Button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Barcode Label Print Modal */}
+      <Modal isOpen={!!labelProduct} onClose={() => setLabelProduct(null)} title="Print Barcode Labels" size="sm">
+        {labelProduct && (
+          <div className="p-5 space-y-4">
+            <p className="text-sm text-gray-600 dark:text-gray-400">
+              <strong>{labelProduct.name}</strong><br />
+              Barcode: <span className="font-mono">{labelProduct.barcode}</span>
+            </p>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">Format</label>
+                <select
+                  value={labelFormat}
+                  onChange={e => setLabelFormat(e.target.value as typeof labelFormat)}
+                  className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100"
+                >
+                  <option value="A4">A4 Sheet</option>
+                  <option value="thermal">Thermal Roll</option>
+                </select>
+              </div>
+              <Input label="Qty" type="number" min="1" max="200"
+                value={labelQty} onChange={e => setLabelQty(parseInt(e.target.value) || 1)} />
+            </div>
+            <div className="flex gap-3">
+              <Button variant="outline" fullWidth onClick={() => setLabelProduct(null)}>Cancel</Button>
+              <Button fullWidth onClick={handlePrintLabels} icon={<Printer className="w-4 h-4" />}>Print Labels</Button>
+            </div>
+          </div>
+        )}
+      </Modal>
+
+      {/* Hidden label sheet for printing */}
+      <div className="hidden">
+        <div ref={labelSheetRef} id="barcode-label-sheet">
+          {labelProduct && activeShop && (
+            <BarcodeLabelSheet
+              product={labelProduct}
+              format={labelFormat}
+              quantity={labelQty}
+              shopName={activeShop.name}
+            />
+          )}
+        </div>
+      </div>
+
+      {/* Delete Confirmation */}
       <ConfirmDialog
         isOpen={!!deleteId}
         onClose={() => setDeleteId(null)}
         onConfirm={handleDelete}
         title="Delete Product"
-        message="This will deactivate the product. Existing bills with this product are unaffected. Continue?"
+        message="Are you sure you want to delete this product? This action cannot be undone."
         confirmLabel="Delete"
-        danger
+        danger={true}
       />
 
-      {/* Barcode Label Print Modal */}
-      <Modal isOpen={!!labelProduct} onClose={() => setLabelProduct(null)} title="Print Barcode Labels" size="lg">
-        {labelProduct && (
-          <div className="p-6 space-y-5">
-            {/* Settings row */}
-            <div className="flex flex-wrap gap-4 items-end">
-              {/* Format */}
-              <div className="space-y-1">
-                <p className="text-xs font-semibold text-gray-500 uppercase">Label Format</p>
-                <div className="flex rounded-lg border border-gray-200 dark:border-gray-600 overflow-hidden">
-                  {(['A4', 'THERMAL'] as LabelFormat[]).map(f => (
-                    <button
-                      key={f}
-                      onClick={() => setLabelFormat(f)}
-                      className={`px-4 py-2 text-sm font-medium transition-colors ${labelFormat === f ? 'bg-purple-600 text-white' : 'text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700'}`}
-                    >
-                      {f === 'A4' ? '🖨️ A4 Sheet (3×col)' : '🔖 Thermal (58mm)'}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Quantity */}
-              <div className="space-y-1">
-                <p className="text-xs font-semibold text-gray-500 uppercase">Quantity</p>
-                <div className="flex items-center border border-gray-200 dark:border-gray-600 rounded-lg overflow-hidden">
-                  <button onClick={() => setLabelQty(q => Math.max(1, q - 1))} className="px-3 py-2 hover:bg-gray-100 dark:hover:bg-gray-700 font-bold">−</button>
-                  <input
-                    type="number" min={1} max={100} value={labelQty}
-                    onChange={e => setLabelQty(Math.max(1, Math.min(100, parseInt(e.target.value) || 1)))}
-                    className="w-16 text-center py-2 bg-transparent text-gray-900 dark:text-gray-100 focus:outline-none"
-                  />
-                  <button onClick={() => setLabelQty(q => Math.min(100, q + 1))} className="px-3 py-2 hover:bg-gray-100 dark:hover:bg-gray-700 font-bold">+</button>
-                </div>
-              </div>
-
-              <Button
-                icon={<Printer className="w-4 h-4" />}
-                onClick={() => handlePrintLabels?.()}
-                className="bg-purple-600 hover:bg-purple-700 text-white"
-              >
-                Print {labelQty} Label{labelQty > 1 ? 's' : ''}
-              </Button>
-            </div>
-
-            {/* Product info */}
-            <div className="bg-gray-50 dark:bg-gray-700 rounded-xl p-3 flex items-center gap-3">
-              <Package className="w-8 h-8 text-gray-400 flex-shrink-0" />
-              <div>
-                <p className="font-semibold text-sm text-gray-900 dark:text-gray-100">{labelProduct.name}</p>
-                <p className="text-xs text-gray-500">
-                  {labelProduct.barcode} • {labelProduct.category || 'No category'}
-                  {labelProduct.size && ` • ${labelProduct.size}`}
-                  {labelProduct.color && ` • ${labelProduct.color}`}
-                  {' • '}₹{labelProduct.selling_price}
-                </p>
-              </div>
-            </div>
-
-            {/* Preview */}
-            <div>
-              <p className="text-xs font-semibold text-gray-500 uppercase mb-2">Print Preview</p>
-              <div className="overflow-auto border border-gray-200 dark:border-gray-700 rounded-xl bg-white p-4" style={{ maxHeight: '400px' }}>
-                <BarcodeLabelSheet
-                  ref={labelSheetRef}
-                  product={labelProduct}
-                  shopName={activeShop?.name || 'Shop'}
-                  format={labelFormat}
-                  quantity={Math.min(labelQty, labelFormat === 'A4' ? 24 : 10)}
-                />
-              </div>
-              {labelQty > (labelFormat === 'A4' ? 24 : 10) && (
-                <p className="text-xs text-amber-600 mt-1">
-                  Preview shows first {labelFormat === 'A4' ? 24 : 10} labels. All {labelQty} will print.
-                </p>
-              )}
-            </div>
-          </div>
-        )}
-      </Modal>
     </div>
   )
+
 }

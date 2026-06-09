@@ -5,7 +5,8 @@ import { useShopStore } from '../../store/shopStore'
 import {
   LayoutDashboard, ShoppingCart, Package, Users, FileText, ClipboardList,
   AlertCircle, ArrowLeftRight, BarChart2, Settings, ChevronRight,
-  Store, Menu, X, Barcode, Truck, Building2, Repeat2, Activity
+  Store, Menu, X, Barcode, Truck, Building2, Repeat2, Activity,
+  ClipboardCheck, TrendingUp, GitCompare, Moon, Zap
 } from 'lucide-react'
 
 interface NavItem {
@@ -41,6 +42,17 @@ const navSections: NavSection[] = [
       { path: '/purchases',  label: 'Purchase Entry',    icon: Truck },
       { path: '/transfers',  label: 'Stock Transfer',    icon: Repeat2 },
       { path: '/movements',  label: 'Stock Movements',   icon: Activity },
+      { path: '/barcode-designer', label: 'Barcode Designer', icon: Barcode },
+    ],
+  },
+  {
+    title: 'Inventory Analytics',
+    items: [
+      { path: '/stock-audit',          label: 'Stock Audit',         icon: ClipboardCheck },
+      { path: '/stock-reports',        label: 'Stock Reports',       icon: BarChart2 },
+      { path: '/product-performance',  label: 'Product Performance', icon: TrendingUp },
+      { path: '/daily-closing',        label: 'Daily Closing',       icon: Moon },
+      { path: '/shop-comparison',      label: 'Shop Comparison',     icon: GitCompare },
     ],
   },
   {

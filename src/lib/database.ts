@@ -7,7 +7,9 @@ import type {
   Exchange, ExchangeItem, InventoryMovement, CartItem, DashboardStats,
   SalesTrend, TopProduct, Shop, ShopSettings, Supplier, ActivityLog,
   PurchaseInvoice, PurchaseItem, StockTransfer, StockTransferItem,
-  HeldBill, Quotation, QuotationItem
+  HeldBill, Quotation, QuotationItem,
+  StockAudit, StockAuditItem, DailyClosing,
+  StockAgeItem, FastMovingProduct, FastMovingCategory, ProductPerformance
 } from '../types'
 
 // ============================================================
@@ -560,7 +562,7 @@ export const bills = {
       .single()
     if (billErr) throw billErr
 
-    // Insert bill items
+    // Insert bill items (include purchase_price for profit tracking)
     const billItems = items.map(item => ({
       bill_id: bill.id,
       shop_id: shopId,
@@ -580,6 +582,7 @@ export const bills = {
       gst_amount: item.gst_amount,
       total_amount: item.total_amount,
       is_custom_item: item.is_custom_item,
+      purchase_price: (item as CartItem & { purchase_price?: number }).purchase_price || 0,
     }))
 
     const { error: itemsErr } = await supabase.from('bill_items').insert(billItems)
@@ -1160,6 +1163,114 @@ export const stockTransfersDb = {
 
     return transfer
   },
+
+  async createRequest(
+    fromShopId: string,
+    toShopId: string,
+    items: { fromProductId: string; barcode: string; productName: string; quantity: number; unitCost: number }[],
+    notes: string,
+    requestedBy: string
+  ): Promise<StockTransfer> {
+    const transferNumber = 'REQ-' + Date.now()
+    const { data: transfer, error } = await supabase
+      .from('stock_transfers')
+      .insert({
+        transfer_number: transferNumber,
+        from_shop_id: fromShopId,
+        to_shop_id: toShopId,
+        status: 'PENDING',
+        notes: notes || null,
+        requested_by: requestedBy || null,
+      })
+      .select()
+      .single()
+    if (error) throw error
+
+    const transferItems = items.map(i => ({
+      transfer_id: transfer.id,
+      product_id: i.fromProductId,
+      barcode: i.barcode,
+      product_name: i.productName,
+      quantity: i.quantity,
+      unit_cost: i.unitCost,
+    }))
+    const { error: itemsErr } = await supabase.from('stock_transfer_items').insert(transferItems)
+    if (itemsErr) throw itemsErr
+    return transfer
+  },
+
+  async listRequests(shopId: string): Promise<(StockTransfer & { stock_transfer_items: StockTransferItem[] })[]> {
+    const { data, error } = await supabase
+      .from('stock_transfers')
+      .select('*, stock_transfer_items(*)')
+      .or('from_shop_id.eq.' + shopId + ',to_shop_id.eq.' + shopId)
+      .in('status', ['PENDING', 'APPROVED', 'REJECTED'])
+      .order('created_at', { ascending: false })
+    if (error) throw error
+    return (data || []) as (StockTransfer & { stock_transfer_items: StockTransferItem[] })[]
+  },
+
+  async approveAndExecute(transferId: string, approvedBy: string): Promise<void> {
+    const { data: t, error } = await supabase
+      .from('stock_transfers')
+      .select('*, stock_transfer_items(*)')
+      .eq('id', transferId)
+      .single()
+    if (error || !t) throw error || new Error('Transfer not found')
+    if (t.status !== 'PENDING') throw new Error('Transfer is not pending')
+
+    await supabase.from('stock_transfers').update({
+      status: 'APPROVED', approved_by: approvedBy, approved_at: new Date().toISOString()
+    }).eq('id', transferId)
+
+    const items: StockTransferItem[] = t.stock_transfer_items || []
+    for (const item of items) {
+      if (!item.product_id) continue
+      await products.adjustStock(
+        item.product_id, t.from_shop_id, -item.quantity,
+        'OUT', 'MANUAL', transferId, t.transfer_number,
+        'Transfer OUT → ' + t.transfer_number, approvedBy
+      )
+      let destProductId: string | null = null
+      const { data: destExisting } = await supabase
+        .from('products').select('id')
+        .eq('shop_id', t.to_shop_id).eq('barcode', item.barcode || '').eq('is_active', true).single()
+      if (destExisting) {
+        destProductId = destExisting.id
+      } else if (item.product_id) {
+        const srcProduct = await products.getById(item.product_id)
+        if (srcProduct) {
+          const { data: newProd, error: cErr } = await supabase.from('products').insert({
+            shop_id: t.to_shop_id, barcode: srcProduct.barcode, name: srcProduct.name,
+            category: srcProduct.category, sub_category: srcProduct.sub_category, brand: srcProduct.brand,
+            size: srcProduct.size, color: srcProduct.color, gender: srcProduct.gender, fabric: srcProduct.fabric,
+            purchase_price: srcProduct.purchase_price, selling_price: srcProduct.selling_price,
+            mrp: srcProduct.mrp, discount_pct: srcProduct.discount_pct, gst_rate: srcProduct.gst_rate,
+            hsn_code: srcProduct.hsn_code, stock_quantity: 0, low_stock_limit: srcProduct.low_stock_limit,
+            supplier_id: null, supplier_name: srcProduct.supplier_name, is_active: true,
+          }).select('id').single()
+          if (cErr) throw cErr
+          destProductId = newProd.id
+        }
+      }
+      if (destProductId) {
+        await products.adjustStock(
+          destProductId, t.to_shop_id, item.quantity,
+          'IN', 'MANUAL', transferId, t.transfer_number,
+          'Transfer IN ← ' + t.transfer_number, approvedBy
+        )
+      }
+    }
+    await supabase.from('stock_transfers').update({ status: 'COMPLETED' }).eq('id', transferId)
+  },
+
+  async rejectRequest(transferId: string, rejectedBy: string, reason: string): Promise<void> {
+    const { error } = await supabase.from('stock_transfers').update({
+      status: 'REJECTED', approved_by: rejectedBy, approved_at: new Date().toISOString(),
+      rejection_reason: reason || null,
+    }).eq('id', transferId)
+    if (error) throw error
+  },
 }
 
 // ============================================================
@@ -1468,5 +1579,465 @@ export const quotationsDb = {
     }).eq('id', quotationId)
 
     return bill
+  },
+}
+
+// ============================================================
+// PHASE 3 DB HELPERS
+// ============================================================
+
+// ─── Stock Audits ─────────────────────────────────────────────────────────────
+export const stockAuditsDb = {
+  async list(shopId: string): Promise<StockAudit[]> {
+    const { data, error } = await supabase
+      .from('stock_audits')
+      .select('*, stock_audit_items(*)')
+      .eq('shop_id', shopId)
+      .order('audit_date', { ascending: false })
+      .order('created_at', { ascending: false })
+    if (error) throw error
+    return data || []
+  },
+
+  async create(shopId: string, auditDate: string, notes: string | null, billerName: string | null): Promise<StockAudit> {
+    const { data, error } = await supabase
+      .from('stock_audits')
+      .insert({ shop_id: shopId, audit_date: auditDate, notes, biller_name: billerName, status: 'DRAFT' })
+      .select()
+      .single()
+    if (error) throw error
+    return data
+  },
+
+  async saveItems(auditId: string, shopId: string, items: Omit<StockAuditItem, 'id' | 'created_at'>[]): Promise<void> {
+    // Delete existing items first
+    await supabase.from('stock_audit_items').delete().eq('audit_id', auditId)
+    if (items.length === 0) return
+    const rows = items.map(i => ({
+      audit_id: auditId,
+      shop_id: shopId,
+      product_id: i.product_id,
+      barcode: i.barcode,
+      product_name: i.product_name,
+      category: i.category,
+      system_quantity: i.system_quantity,
+      physical_quantity: i.physical_quantity,
+      variance: i.physical_quantity - i.system_quantity,
+      adjustment_reason: i.adjustment_reason,
+      is_adjusted: false,
+    }))
+    const { error } = await supabase.from('stock_audit_items').insert(rows)
+    if (error) throw error
+    // Update summary on audit
+    const totalVariance = rows.reduce((s, r) => s + r.variance, 0)
+    await supabase.from('stock_audits').update({
+      total_items: rows.length,
+      total_variance: totalVariance,
+      updated_at: new Date().toISOString(),
+    }).eq('id', auditId)
+  },
+
+  async confirm(auditId: string, shopId: string, billerName: string): Promise<void> {
+    // Fetch audit items that have variance
+    const { data: items, error: fetchErr } = await supabase
+      .from('stock_audit_items')
+      .select('*')
+      .eq('audit_id', auditId)
+      .neq('variance', 0)
+    if (fetchErr) throw fetchErr
+
+    for (const item of items || []) {
+      if (!item.product_id) continue
+      const delta = item.variance // positive = excess, negative = shortage
+      await (await import('./database')).products.adjustStock(
+        item.product_id,
+        shopId,
+        delta,
+        'ADJUSTMENT',
+        'MANUAL',
+        auditId,
+        `AUDIT-${auditId.slice(0, 8)}`,
+        item.adjustment_reason || 'Stock audit adjustment',
+        billerName,
+      )
+      await supabase.from('stock_audit_items').update({ is_adjusted: true }).eq('id', item.id)
+    }
+
+    await supabase.from('stock_audits').update({
+      status: 'CONFIRMED',
+      updated_at: new Date().toISOString(),
+    }).eq('id', auditId)
+  },
+
+  async delete(auditId: string): Promise<void> {
+    const { error } = await supabase.from('stock_audits').delete().eq('id', auditId)
+    if (error) throw error
+  },
+}
+
+// ─── Daily Closing ─────────────────────────────────────────────────────────────
+export const dailyClosingDb = {
+  async getByDate(shopId: string, date: string): Promise<DailyClosing | null> {
+    const { data, error } = await supabase
+      .from('daily_closings')
+      .select('*')
+      .eq('shop_id', shopId)
+      .eq('closing_date', date)
+      .single()
+    if (error && error.code !== 'PGRST116') throw error
+    return data
+  },
+
+  async list(shopId: string, limit = 30): Promise<DailyClosing[]> {
+    const { data, error } = await supabase
+      .from('daily_closings')
+      .select('*')
+      .eq('shop_id', shopId)
+      .order('closing_date', { ascending: false })
+      .limit(limit)
+    if (error) throw error
+    return data || []
+  },
+
+  async computeAndSave(shopId: string, date: string, closedBy: string, notes: string | null): Promise<DailyClosing> {
+    const from = `${date}T00:00:00+05:30`
+    const to = `${date}T23:59:59+05:30`
+
+    // Bills for the day
+    const { data: dayBills } = await supabase
+      .from('bills')
+      .select('id, grand_total, due_amount, payment_status, created_at')
+      .eq('shop_id', shopId)
+      .eq('is_deleted', false)
+      .gte('created_at', from)
+      .lte('created_at', to)
+
+    const billIds = (dayBills || []).map(b => b.id)
+    const totalBills = billIds.length
+    const grossRevenue = (dayBills || []).reduce((s, b) => s + b.grand_total, 0)
+    const dueCreated = (dayBills || []).reduce((s, b) => s + b.due_amount, 0)
+
+    // Payments for the day
+    const { data: dayPayments } = await supabase
+      .from('payments')
+      .select('amount, payment_method, payment_type')
+      .eq('shop_id', shopId)
+      .gte('created_at', from)
+      .lte('created_at', to)
+
+    let cashTotal = 0, upiTotal = 0, cardTotal = 0, otherTotal = 0, dueCollected = 0
+    for (const p of dayPayments || []) {
+      if (p.payment_type === 'DUE_COLLECTION') { dueCollected += p.amount; continue }
+      const m = (p.payment_method || '').toLowerCase()
+      if (m.includes('cash')) cashTotal += p.amount
+      else if (m.includes('upi') || m.includes('qr')) upiTotal += p.amount
+      else if (m.includes('card')) cardTotal += p.amount
+      else otherTotal += p.amount
+    }
+
+    // Returns for the day
+    const { data: dayReturns } = await supabase
+      .from('returns')
+      .select('refund_amount')
+      .eq('shop_id', shopId)
+      .gte('created_at', from)
+      .lte('created_at', to)
+    const returnsTotal = (dayReturns || []).reduce((s, r) => s + r.refund_amount, 0)
+
+    // Exchanges for the day
+    const { data: dayExchanges } = await supabase
+      .from('exchanges')
+      .select('price_difference')
+      .eq('shop_id', shopId)
+      .gte('created_at', from)
+      .lte('created_at', to)
+    const exchangesTotal = (dayExchanges || []).reduce((s, e) => s + Math.abs(e.price_difference), 0)
+
+    // Cost (sum purchase_price * quantity from bill_items for today's bills)
+    let totalCost = 0
+    if (billIds.length > 0) {
+      const { data: dayItems } = await supabase
+        .from('bill_items')
+        .select('purchase_price, quantity')
+        .in('bill_id', billIds)
+      totalCost = (dayItems || []).reduce((s, i) => s + (i.purchase_price || 0) * i.quantity, 0)
+    }
+
+    const grossProfit = grossRevenue - totalCost
+    const netRevenue = grossRevenue - returnsTotal
+
+    const row = {
+      shop_id: shopId,
+      closing_date: date,
+      total_bills: totalBills,
+      cash_total: cashTotal,
+      upi_total: upiTotal,
+      card_total: cardTotal,
+      other_total: otherTotal,
+      due_created: dueCreated,
+      due_collected: dueCollected,
+      returns_total: returnsTotal,
+      exchanges_total: exchangesTotal,
+      gross_revenue: grossRevenue,
+      total_cost: totalCost,
+      gross_profit: grossProfit,
+      net_revenue: netRevenue,
+      closed_by: closedBy,
+      notes,
+    }
+
+    const { data, error } = await supabase
+      .from('daily_closings')
+      .upsert(row, { onConflict: 'shop_id,closing_date' })
+      .select()
+      .single()
+    if (error) throw error
+    return data
+  },
+}
+
+// ─── Stock Age / Dead Stock ───────────────────────────────────────────────────
+export const stockReportsDb = {
+  async getStockAge(shopId: string, daysThreshold = 30): Promise<StockAgeItem[]> {
+    // Get all active products with stock > 0
+    const { data: prods, error: pErr } = await supabase
+      .from('products')
+      .select('id, barcode, name, category, size, color, stock_quantity, purchase_price, selling_price')
+      .eq('shop_id', shopId)
+      .eq('is_active', true)
+      .gt('stock_quantity', 0)
+    if (pErr) throw pErr
+
+    if (!prods || prods.length === 0) return []
+
+    // Get last sale date per product from bill_items
+    const { data: lastSales } = await supabase
+      .from('bill_items')
+      .select('product_id, bills(created_at)')
+      .eq('shop_id', shopId)
+      .not('product_id', 'is', null)
+
+    const lastSaleMap: Record<string, string> = {}
+    for (const row of lastSales || []) {
+      const billRow = row as unknown as { product_id: string; bills: { created_at: string } | null }
+      if (!billRow.product_id || !billRow.bills) continue
+      const existing = lastSaleMap[billRow.product_id]
+      if (!existing || billRow.bills.created_at > existing) {
+        lastSaleMap[billRow.product_id] = billRow.bills.created_at
+      }
+    }
+
+    const now = new Date()
+    return prods
+      .map(p => {
+        const lastSold = lastSaleMap[p.id] || null
+        const daysSince = lastSold
+          ? Math.floor((now.getTime() - new Date(lastSold).getTime()) / 86400000)
+          : 9999
+        return {
+          product_id: p.id,
+          barcode: p.barcode,
+          product_name: p.name,
+          category: p.category,
+          size: p.size,
+          color: p.color,
+          current_stock: p.stock_quantity,
+          last_sold_date: lastSold,
+          days_since_sold: daysSince,
+          purchase_price: p.purchase_price || 0,
+          selling_price: p.selling_price,
+          inventory_value: (p.purchase_price || 0) * p.stock_quantity,
+        } as StockAgeItem
+      })
+      .filter(p => p.days_since_sold >= daysThreshold)
+      .sort((a, b) => b.days_since_sold - a.days_since_sold)
+  },
+
+  async getFastMoving(shopId: string, from: string, to: string, limit = 50): Promise<FastMovingProduct[]> {
+    const { data, error } = await supabase
+      .from('bill_items')
+      .select('product_id, barcode, product_name, category, size, color, quantity, total_amount, purchase_price, bills!inner(shop_id, created_at, is_deleted)')
+      .eq('shop_id', shopId)
+      .eq('bills.shop_id', shopId)
+      .eq('bills.is_deleted', false)
+      .gte('bills.created_at', `${from}T00:00:00`)
+      .lte('bills.created_at', `${to}T23:59:59`)
+    if (error) throw error
+
+    const map: Record<string, FastMovingProduct> = {}
+    for (const row of data || []) {
+      const key = row.product_id || row.barcode || row.product_name
+      if (!map[key]) {
+        map[key] = {
+          product_id: row.product_id || '',
+          product_name: row.product_name,
+          barcode: row.barcode || '',
+          category: row.category,
+          size: row.size,
+          color: row.color,
+          total_qty: 0,
+          total_revenue: 0,
+          total_profit: 0,
+          bill_count: 0,
+        }
+      }
+      map[key].total_qty += row.quantity
+      map[key].total_revenue += row.total_amount
+      map[key].total_profit += (row.total_amount - (row.purchase_price || 0) * row.quantity)
+      map[key].bill_count += 1
+    }
+
+    return Object.values(map)
+      .sort((a, b) => b.total_qty - a.total_qty)
+      .slice(0, limit)
+  },
+
+  async getFastMovingCategories(shopId: string, from: string, to: string): Promise<FastMovingCategory[]> {
+    const { data, error } = await supabase
+      .from('bill_items')
+      .select('category, quantity, total_amount, bills!inner(shop_id, created_at, is_deleted)')
+      .eq('shop_id', shopId)
+      .eq('bills.shop_id', shopId)
+      .eq('bills.is_deleted', false)
+      .gte('bills.created_at', `${from}T00:00:00`)
+      .lte('bills.created_at', `${to}T23:59:59`)
+    if (error) throw error
+
+    const map: Record<string, FastMovingCategory> = {}
+    for (const row of data || []) {
+      const cat = row.category || 'Uncategorized'
+      if (!map[cat]) map[cat] = { category: cat, total_qty: 0, total_revenue: 0, bill_count: 0 }
+      map[cat].total_qty += row.quantity
+      map[cat].total_revenue += row.total_amount
+      map[cat].bill_count += 1
+    }
+
+    return Object.values(map).sort((a, b) => b.total_qty - a.total_qty)
+  },
+
+  async getProductPerformance(shopId: string, from: string, to: string): Promise<ProductPerformance[]> {
+    const { data: prods } = await supabase
+      .from('products')
+      .select('id, barcode, name, category, size, color, stock_quantity, purchase_price, selling_price')
+      .eq('shop_id', shopId)
+      .eq('is_active', true)
+
+    if (!prods) return []
+
+    const { data: sold } = await supabase
+      .from('bill_items')
+      .select('product_id, quantity, total_amount, purchase_price, bills!inner(shop_id, created_at, is_deleted)')
+      .eq('shop_id', shopId)
+      .eq('bills.shop_id', shopId)
+      .eq('bills.is_deleted', false)
+      .gte('bills.created_at', `${from}T00:00:00`)
+      .lte('bills.created_at', `${to}T23:59:59`)
+
+    const { data: added } = await supabase
+      .from('inventory_movements')
+      .select('product_id, quantity')
+      .eq('shop_id', shopId)
+      .eq('movement_type', 'IN')
+      .gte('created_at', `${from}T00:00:00`)
+      .lte('created_at', `${to}T23:59:59`)
+
+    const { data: rets } = await supabase
+      .from('return_items')
+      .select('product_id, quantity, returns!inner(shop_id, created_at)')
+      .eq('returns.shop_id', shopId)
+      .gte('returns.created_at', `${from}T00:00:00`)
+      .lte('returns.created_at', `${to}T23:59:59`)
+
+    const soldMap: Record<string, { qty: number; rev: number; cost: number; last: string }> = {}
+    for (const r of sold || []) {
+      if (!r.product_id) continue
+      const billRow = r as unknown as { product_id: string; quantity: number; total_amount: number; purchase_price: number; bills: { created_at: string } | null }
+      if (!soldMap[r.product_id]) soldMap[r.product_id] = { qty: 0, rev: 0, cost: 0, last: '' }
+      soldMap[r.product_id].qty += r.quantity
+      soldMap[r.product_id].rev += r.total_amount
+      soldMap[r.product_id].cost += (r.purchase_price || 0) * r.quantity
+      const ca = billRow.bills?.created_at || ''
+      if (ca > soldMap[r.product_id].last) soldMap[r.product_id].last = ca
+    }
+
+    const addedMap: Record<string, number> = {}
+    for (const r of added || []) {
+      if (!r.product_id) continue
+      addedMap[r.product_id] = (addedMap[r.product_id] || 0) + r.quantity
+    }
+
+    const retMap: Record<string, number> = {}
+    for (const r of rets || []) {
+      if (!r.product_id) continue
+      retMap[r.product_id] = (retMap[r.product_id] || 0) + r.quantity
+    }
+
+    return prods.map(p => {
+      const s = soldMap[p.id] || { qty: 0, rev: 0, cost: 0, last: '' }
+      return {
+        product_id: p.id,
+        barcode: p.barcode,
+        product_name: p.name,
+        category: p.category,
+        size: p.size,
+        color: p.color,
+        current_stock: p.stock_quantity,
+        purchase_price: p.purchase_price || 0,
+        selling_price: p.selling_price,
+        stock_added: addedMap[p.id] || 0,
+        stock_sold: s.qty,
+        revenue: s.rev,
+        cost: s.cost,
+        profit: s.rev - s.cost,
+        returns_qty: retMap[p.id] || 0,
+        exchanges_qty: 0,
+        last_sale_date: s.last || null,
+      } as ProductPerformance
+    })
+  },
+}
+
+// ─── Shop Comparison ──────────────────────────────────────────────────────────
+export const shopComparisonDb = {
+  async compare(shopIds: string[], from: string, to: string): Promise<{
+    shop_id: string; revenue: number; profit: number; bills_count: number;
+    returns_amount: number; due_amount: number; inventory_value: number;
+  }[]> {
+    const results = await Promise.all(shopIds.map(async shopId => {
+      const { data: bills } = await supabase
+        .from('bills')
+        .select('id, grand_total, due_amount')
+        .eq('shop_id', shopId)
+        .eq('is_deleted', false)
+        .gte('created_at', from + 'T00:00:00')
+        .lte('created_at', to + 'T23:59:59')
+
+      const revenue = (bills || []).reduce((s: number, b: { grand_total: number }) => s + (b.grand_total || 0), 0)
+      const billsCount = (bills || []).length
+      const dueAmount = (bills || []).reduce((s: number, b: { due_amount: number }) => s + (b.due_amount || 0), 0)
+      const billIds = (bills || []).map((b: { id: string }) => b.id)
+
+      let profit = 0
+      if (billIds.length > 0) {
+        const { data: items } = await supabase
+          .from('bill_items').select('quantity, total_amount, purchase_price').in('bill_id', billIds)
+        profit = (items || []).reduce((s: number, i: { quantity: number; total_amount: number; purchase_price: number }) =>
+          s + i.total_amount - i.quantity * (i.purchase_price || 0), 0)
+      }
+
+      const { data: rets } = await supabase
+        .from('returns').select('refund_amount').eq('shop_id', shopId)
+        .gte('created_at', from + 'T00:00:00').lte('created_at', to + 'T23:59:59')
+      const returnsAmount = (rets || []).reduce((s: number, r: { refund_amount: number }) => s + (r.refund_amount || 0), 0)
+
+      const { data: invProds } = await supabase
+        .from('products').select('stock_quantity, purchase_price, selling_price')
+        .eq('shop_id', shopId).eq('is_active', true)
+      const inventoryValue = (invProds || []).reduce((s: number, p: { stock_quantity: number; purchase_price: number; selling_price: number }) =>
+        s + p.stock_quantity * (p.purchase_price || p.selling_price || 0), 0)
+
+      return { shop_id: shopId, revenue, profit, bills_count: billsCount, returns_amount: returnsAmount, due_amount: dueAmount, inventory_value: inventoryValue }
+    }))
+    return results
   },
 }

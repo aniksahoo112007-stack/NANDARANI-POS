@@ -1,0 +1,73 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * { box-sizing: border-box; }
+  html { font-family: 'Inter', system-ui, sans-serif; }
+  body { @apply bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100; }
+  ::-webkit-scrollbar { @apply w-1.5 h-1.5; }
+  ::-webkit-scrollbar-track { @apply bg-transparent; }
+  ::-webkit-scrollbar-thumb { @apply bg-gray-300 dark:bg-gray-600 rounded-full; }
+  ::-webkit-scrollbar-thumb:hover { @apply bg-gray-400 dark:bg-gray-500; }
+}
+
+@layer components {
+  /* Thermal bill print styles */
+  @media print {
+    body * { visibility: hidden !important; }
+    .thermal-bill, .thermal-bill * { visibility: visible !important; }
+    .thermal-bill {
+      position: fixed !important;
+      top: 0 !important;
+      left: 0 !important;
+      width: 80mm !important;
+      padding: 0 !important;
+      margin: 0 !important;
+      font-size: 11px !important;
+    }
+    .no-print { display: none !important; }
+  }
+
+  .thermal-bill {
+    font-family: 'Courier New', monospace;
+    font-size: 11px;
+    width: 80mm;
+    background: white;
+    color: black;
+    padding: 4mm;
+  }
+  .thermal-bill .divider { border-top: 1px dashed black; margin: 3px 0; }
+  .thermal-bill .bold { font-weight: bold; }
+  .thermal-bill .center { text-align: center; }
+  .thermal-bill table { width: 100%; font-size: 10px; }
+  .thermal-bill table td { padding: 1px 2px; }
+  .thermal-bill .stamp {
+    display: inline-block;
+    border: 2px solid currentColor;
+    padding: 2px 6px;
+    font-weight: bold;
+    font-size: 13px;
+    letter-spacing: 2px;
+    transform: rotate(-5deg);
+  }
+
+  /* Barcode label */
+  .barcode-label {
+    font-family: 'Courier New', monospace;
+    font-size: 9px;
+    width: 40mm;
+    padding: 2mm;
+    border: 1px solid #ccc;
+    background: white;
+    color: black;
+    text-align: center;
+    break-inside: avoid;
+  }
+}
+
+/* Animation utilities */
+.animate-fade-in { animation: fadeIn 0.2s ease-in-out; }
+.animate-slide-up { animation: slideUp 0.2s ease-out; }
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+@keyframes slideUp { from { transform: translateY(10px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }

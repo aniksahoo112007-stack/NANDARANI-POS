@@ -35,18 +35,6 @@ export const auth = {
     if (error) throw error
     return data
   },
-  async signUp(email: string, password: string) {
-    const { data, error } = await supabase.auth.signUp({ email, password })
-    if (error) throw error
-    // Setup initial shops for new user
-    if (data.user) {
-      await supabase.rpc('setup_initial_shops', {
-        p_user_id: data.user.id,
-        p_email: email,
-      })
-    }
-    return data
-  },
   async signOut() {
     const { error } = await supabase.auth.signOut()
     if (error) throw error

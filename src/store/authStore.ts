@@ -12,7 +12,6 @@ interface AuthState {
   loading: boolean
   initialized: boolean
   signIn: (email: string, password: string) => Promise<void>
-  signUp: (email: string, password: string) => Promise<void>
   signOut: () => Promise<void>
   setUser: (user: User | null, session: Session | null) => void
   fetchProfile: (userId: string) => Promise<void>
@@ -31,17 +30,6 @@ export const useAuthStore = create<AuthState>()(
         set({ loading: true })
         try {
           const data = await auth.signIn(email, password)
-          set({ user: data.user, session: data.session })
-          if (data.user) await get().fetchProfile(data.user.id)
-        } finally {
-          set({ loading: false })
-        }
-      },
-
-      signUp: async (email, password) => {
-        set({ loading: true })
-        try {
-          const data = await auth.signUp(email, password)
           set({ user: data.user, session: data.session })
           if (data.user) await get().fetchProfile(data.user.id)
         } finally {

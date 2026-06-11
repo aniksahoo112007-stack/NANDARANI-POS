@@ -2,15 +2,18 @@ import React, { useState, useEffect } from 'react'
 import { useShopStore } from '../store/shopStore'
 import { shops } from '../lib/database'
 import { Button, Input, Textarea, Toggle, Card, ConfirmDialog } from '../components/ui'
-import { Save, RefreshCw, Plus, X, AlertTriangle } from 'lucide-react'
+import { Save, RefreshCw, Plus, X, Globe, MapPin, Clock, Eye, EyeOff, Image } from 'lucide-react'
 import toast from 'react-hot-toast'
 import type { ShopSettings, Shop } from '../types'
 
 export const Settings: React.FC = () => {
-  const { activeShop, activeSettings, updateShop, updateSettings, refreshSettings } = useShopStore()
+  const { activeShop, activeSettings, updateShop, updateSettings, refreshSettings, shops: allShops } = useShopStore()
   const [shopData, setShopData] = useState<Partial<Shop>>({})
   const [settingsData, setSettingsData] = useState<Partial<ShopSettings>>({})
   const [saving, setSaving] = useState(false)
+  // Catalog state: keyed by shopId
+  const [catalogData, setCatalogData] = useState<Record<string, Partial<Shop>>>({})
+  const [catalogSaving, setCatalogSaving] = useState<string | null>(null)
   const [billerInput, setBillerInput] = useState('')
   const [paymentInput, setPaymentInput] = useState('')
   const [confirmReset, setConfirmReset] = useState<'bill' | 'barcode' | null>(null)
@@ -22,6 +25,27 @@ export const Settings: React.FC = () => {
   useEffect(() => {
     if (activeSettings) setSettingsData(activeSettings)
   }, [activeSettings])
+
+  // Seed catalog form whenever allShops loads/changes
+  useEffect(() => {
+    if (allShops.length > 0) {
+      setCatalogData(prev => {
+        const next = { ...prev }
+        allShops.forEach(s => {
+          if (!next[s.id]) next[s.id] = {
+            whatsapp: s.whatsapp ?? '',
+            address: s.address ?? '',
+            google_maps_url: s.google_maps_url ?? '',
+            shop_photo_url: s.shop_photo_url ?? '',
+            catalog_url: s.catalog_url ?? '',
+            business_hours: s.business_hours ?? '',
+            show_in_catalog: s.show_in_catalog ?? true,
+          }
+        })
+        return next
+      })
+    }
+  }, [allShops])
 
   const handleSaveShop = async () => {
     if (!activeShop) return
@@ -92,6 +116,31 @@ export const Settings: React.FC = () => {
       toast.error(e instanceof Error ? e.message : 'Reset failed')
     }
   }
+
+  const handleSaveCatalog = async (shopId: string, shopName: string) => {
+    const data = catalogData[shopId]
+    if (!data) return
+    setCatalogSaving(shopId)
+    try {
+      await updateShop(shopId, {
+        whatsapp: data.whatsapp ?? null,
+        address: data.address ?? null,
+        google_maps_url: data.google_maps_url ?? null,
+        shop_photo_url: data.shop_photo_url ?? null,
+        catalog_url: data.catalog_url ?? null,
+        business_hours: data.business_hours ?? null,
+        show_in_catalog: data.show_in_catalog ?? true,
+      })
+      toast.success(`Catalog profile saved for ${shopName}`)
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : 'Failed to save catalog profile')
+    } finally {
+      setCatalogSaving(null)
+    }
+  }
+
+  const setCatalog = (shopId: string, updates: Partial<Shop>) =>
+    setCatalogData(prev => ({ ...prev, [shopId]: { ...prev[shopId], ...updates } }))
 
   if (!activeShop) return null
 
@@ -279,6 +328,144 @@ export const Settings: React.FC = () => {
           Save Logo
         </Button>
       </Card>
+
+      {/* ── Catalog & Business Profile ─────────────────────────── */}
+      <div>
+        <div className="mb-4">
+          <h3 className="text-lg font-bold text-gray-900 dark:text-gray-100 flex items-center gap-2">
+            <Globe className="w-5 h-5 text-blue-600" /> Catalog &amp; Business Profile
+          </h3>
+          <p className="text-sm text-gray-500 mt-0.5">
+            Controls how each shop appears in the public catalog app. Set for both shops independently.
+          </p>
+        </div>
+
+        <div className="grid grid-cols-1 xl:grid-cols-2 gap-5">
+          {allShops.map(shop => {
+            const cd = catalogData[shop.id] ?? {}
+            const isSaving = catalogSaving === shop.id
+            return (
+              <Card key={shop.id}>
+                <div className="flex items-center justify-between mb-4">
+                  <div>
+                    <h4 className="font-semibold text-gray-900 dark:text-gray-100 text-sm">{shop.name}</h4>
+                    <span className="text-xs text-gray-400 font-mono">{shop.bill_prefix}</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {cd.show_in_catalog !== false
+                      ? <Eye className="w-4 h-4 text-green-500" />
+                      : <EyeOff className="w-4 h-4 text-gray-400" />}
+                    <Toggle
+                      checked={cd.show_in_catalog ?? true}
+                      onChange={v => setCatalog(shop.id, { show_in_catalog: v })}
+                      label="Show in Catalog"
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-3">
+                  <Input
+                    label="WhatsApp Number"
+                    value={cd.whatsapp ?? ''}
+                    onChange={e => setCatalog(shop.id, { whatsapp: e.target.value })}
+                    placeholder="916296240320"
+                    hint="Country code + number, no spaces or +"
+                  />
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                      Google Maps Direction Link
+                    </label>
+                    <div className="relative">
+                      <MapPin className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
+                      <input
+                        type="url"
+                        value={cd.google_maps_url ?? ''}
+                        onChange={e => setCatalog(shop.id, { google_maps_url: e.target.value })}
+                        placeholder="https://maps.app.goo.gl/..."
+                        className="w-full pl-9 pr-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      />
+                    </div>
+                  </div>
+
+                  <Textarea
+                    label="Shop Address"
+                    rows={2}
+                    value={cd.address ?? ''}
+                    onChange={e => setCatalog(shop.id, { address: e.target.value })}
+                    placeholder="Full shop address..."
+                  />
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                      Shop Photo URL
+                    </label>
+                    <div className="relative">
+                      <Image className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
+                      <input
+                        type="url"
+                        value={cd.shop_photo_url ?? ''}
+                        onChange={e => setCatalog(shop.id, { shop_photo_url: e.target.value })}
+                        placeholder="https://..."
+                        className="w-full pl-9 pr-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      />
+                    </div>
+                    {cd.shop_photo_url && (
+                      <img
+                        src={cd.shop_photo_url}
+                        alt="Shop preview"
+                        className="mt-2 h-16 w-full object-cover rounded-lg border border-gray-200 dark:border-gray-700"
+                        onError={e => (e.currentTarget.style.display = 'none')}
+                      />
+                    )}
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                      Catalog Public URL
+                    </label>
+                    <div className="relative">
+                      <Globe className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
+                      <input
+                        type="url"
+                        value={cd.catalog_url ?? ''}
+                        onChange={e => setCatalog(shop.id, { catalog_url: e.target.value })}
+                        placeholder="https://nandarani-catalog.vercel.app"
+                        className="w-full pl-9 pr-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                      Business Hours
+                    </label>
+                    <div className="relative">
+                      <Clock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
+                      <input
+                        type="text"
+                        value={cd.business_hours ?? ''}
+                        onChange={e => setCatalog(shop.id, { business_hours: e.target.value })}
+                        placeholder="10:00 AM - 9:00 PM"
+                        className="w-full pl-9 pr-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                <Button
+                  onClick={() => handleSaveCatalog(shop.id, shop.name)}
+                  loading={isSaving}
+                  icon={<Save className="w-4 h-4" />}
+                  className="mt-4 w-full"
+                >
+                  Save {shop.bill_prefix} Catalog Profile
+                </Button>
+              </Card>
+            )
+          })}
+        </div>
+      </div>
 
       {/* Confirm Reset Dialogs */}
       <ConfirmDialog

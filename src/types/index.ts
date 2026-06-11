@@ -42,6 +42,12 @@ export interface Shop {
   upi_name: string | null
   logo_url: string | null
   is_active: boolean
+  // Catalog / business profile fields
+  google_maps_url: string | null
+  shop_photo_url: string | null
+  catalog_url: string | null
+  business_hours: string | null
+  show_in_catalog: boolean
   created_at: string
   updated_at: string
 }
